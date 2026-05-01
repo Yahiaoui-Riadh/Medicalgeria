@@ -1,0 +1,60 @@
+[2026-05-01T18:59:52.124Z] 🚀 POST /api/pharmacy/stock started 
+[2026-05-01T18:59:52.228Z] 👤 Session check {
+  "user": {
+    "name": "yahiaoui",
+    "email": "yahiaoui.riadhge@gmail.com",
+    "id": "a2dff1a6-a732-43eb-ae21-bb1a5eb6e210",
+    "role": "PATIENT",
+    "patientId": "cc3c3c0d-ee86-4019-ad5d-d260b4976799"
+  },
+  "expires": "2026-05-31T18:59:52.190Z"
+}
+[2026-05-01T18:59:52.229Z] 🏥 PharmacyId check 
+[2026-05-01T18:59:52.230Z] ❌ No pharmacyId 
+[2026-05-01T19:00:59.050Z] 🚀 POST /api/pharmacy/stock started 
+[2026-05-01T19:00:59.065Z] 👤 Session check {
+  "user": {
+    "name": "yahiaoui",
+    "email": "yahiaoui.riadhge@gmail.com",
+    "id": "a2dff1a6-a732-43eb-ae21-bb1a5eb6e210",
+    "role": "PATIENT",
+    "patientId": "cc3c3c0d-ee86-4019-ad5d-d260b4976799"
+  },
+  "expires": "2026-05-31T19:00:59.058Z"
+}
+[2026-05-01T19:00:59.066Z] 🏥 PharmacyId check 
+[2026-05-01T19:00:59.066Z] ❌ No pharmacyId 
+[2026-05-01T19:00:59.746Z] 🚀 POST /api/pharmacy/stock started 
+[2026-05-01T19:00:59.767Z] 👤 Session check {
+  "user": {
+    "name": "yahiaoui",
+    "email": "yahiaoui.riadhge@gmail.com",
+    "id": "a2dff1a6-a732-43eb-ae21-bb1a5eb6e210",
+    "role": "PATIENT",
+    "patientId": "cc3c3c0d-ee86-4019-ad5d-d260b4976799"
+  },
+  "expires": "2026-05-31T19:00:59.760Z"
+}
+[2026-05-01T19:00:59.767Z] 🏥 PharmacyId check 
+[2026-05-01T19:00:59.767Z] ❌ No pharmacyId 
+[2026-05-01T19:06:08.419Z] 🚀 POST /api/pharmacy/stock started 
+[2026-05-01T19:06:08.449Z] 👤 Session check {
+  "user": {
+    "name": "Pharmacie de Test",
+    "email": "test_pharma@medicalgeria.dz",
+    "id": "51fccd37-b98f-417a-a42f-75ff534be970",
+    "role": "PHARMACIST",
+    "pharmacyId": "b018c3d2-15d7-44b4-a306-e60e1f61647c"
+  },
+  "expires": "2026-05-31T19:06:08.436Z"
+}
+[2026-05-01T19:06:08.449Z] 🏥 PharmacyId check "b018c3d2-15d7-44b4-a306-e60e1f61647c"
+[2026-05-01T19:06:08.451Z] 📦 Body received {
+  "medicineId": "f14df5ce-cff5-4879-94ad-e73283e589d0",
+  "quantity": 10,
+  "purchasePrice": 200,
+  "sellingPrice": 250,
+  "expirationDate": "2026-12-31",
+  "batchNumber": "LOT-TEST-001"
+}
+[2026-05-01T19:06:09.927Z] ✅ Stock created "6fd77656-e42d-4f8d-b27d-8641fbd31a09"

@@ -1,0 +1,442 @@
+// ============================================================
+// MEDICALGERIA — Schéma Prisma Complet
+// Plateforme B2B2C : Patients × Pharmacies × Grossistes
+// ============================================================
+//
+// Diagramme des relations (Mermaid) :
+//
+// erDiagram
+//   User ||--o| Patient : "1-1"
+//   User ||--o| Pharmacy : "1-1"
+//   User ||--o| Wholesaler : "1-1"
+//   Patient ||--o{ Order : "places"
+//   Pharmacy ||--o{ Order : "receives"
+//   Pharmacy ||--o{ Stock : "manages"
+//   Medicine ||--o{ Stock : "stored in"
+//   Order ||--o{ OrderItem : "contains"
+//   Order ||--o{ OrderStatusHistory : "tracks"
+//   Order ||--o{ ChatMessage : "has"
+//   Stock ||--o{ OrderItem : "fulfills"
+//   Wholesaler ||--o{ WholesalerCatalog : "lists"
+//   Wholesaler ||--o{ WholesalerOrder : "receives"
+//   Pharmacy ||--o{ WholesalerOrder : "places"
+//   WholesalerOrder ||--o{ WholesalerOrderItem : "contains"
+//   User ||--o{ Notification : "receives"
+//   User ||--o{ AuditLog : "generates"
+//   User ||--o{ ChatMessage : "sends"
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMERATIONS
+// ============================================================
+
+/// Rôles utilisateurs — détermine les droits d'accès (RBAC)
+enum Role {
+  PATIENT
+  PHARMACIST
+  WHOLESALER
+  ADMIN
+}
+
+/// Statuts d'une commande patient → pharmacie
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  DELIVERED
+  CANCELLED
+  REFUSED
+}
+
+/// Statuts d'une commande pharmacie → grossiste
+enum WholesalerOrderStatus {
+  DRAFT
+  SENT
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+/// Types de notifications push / in-app
+enum NotificationType {
+  ORDER_NEW
+  ORDER_CONFIRMED
+  ORDER_READY
+  ORDER_DELIVERED
+  ORDER_CANCELLED
+  ORDER_REFUSED
+  STOCK_LOW
+  STOCK_EXPIRED
+  PRESCRIPTION_VALIDATED
+  PRESCRIPTION_REFUSED
+  CHAT_MESSAGE
+  WHOLESALE_ORDER_RECEIVED
+  WHOLESALE_STATUS_CHANGED
+  SYSTEM
+}
+
+// ============================================================
+// MODÈLES UTILISATEURS
+// ============================================================
+
+/// Compte commun à tous les acteurs (patient, pharmacien, grossiste, admin)
+model User {
+  id         String    @id @default(uuid())
+  email      String    @unique
+  password   String    /// Hashé bcrypt 12 rounds
+  role       Role
+  phone      String    @unique
+  isVerified Boolean   @default(false)
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime? /// Soft delete — ne jamais supprimer physiquement
+
+  // Relations
+  patient        Patient?
+  pharmacy       Pharmacy?
+  wholesaler     Wholesaler?
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  chatMessages   ChatMessage[]
+  sentMessages     DirectMessage[] @relation("SentMessages")
+  receivedMessages DirectMessage[] @relation("ReceivedMessages")
+  statusChanges  OrderStatusHistory[]
+
+  @@index([email])
+  @@map("users")
+}
+
+model DirectMessage {
+  id          String   @id @default(uuid())
+  senderId    String
+  recipientId String
+  content     String
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  sender    User @relation("SentMessages", fields: [senderId], references: [id])
+  recipient User @relation("ReceivedMessages", fields: [recipientId], references: [id])
+
+  @@index([senderId, recipientId])
+  @@map("direct_messages")
+}
+
+/// Profil patient — informations personnelles et géolocalisation
+model Patient {
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  fullName         String
+  dateOfBirth      DateTime?
+  address          String?
+  geoLocation      Json?     /// { lat: float, lng: float }
+  emergencyContact Json?     /// { name: string, phone: string }
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  orders Order[]
+
+  @@map("patients")
+}
+
+/// Profil officine pharmaceutique — agrément, localisation, horaires
+model Pharmacy {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  name           String
+  licenseNumber  String    @unique /// Numéro d'autorisation d'exploitation MSPRH
+  address        String
+  geoLocation    Json      /// { lat: float, lng: float }
+  isVerified     Boolean   @default(false)
+  isOnDuty       Boolean   @default(false)
+  openingHours   Json      /// { monday: "08:00-19:00", tuesday: "08:00-19:00", ... }
+  city           String
+  wilaya         String    /// Code wilaya algérien (01–58)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user             User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  stock            Stock[]
+  orders           Order[]
+  wholesalerOrders WholesalerOrder[]
+
+  @@map("pharmacies")
+}
+
+/// Profil grossiste pharmaceutique — répertoire commercial B2B
+model Wholesaler {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  companyName       String
+  rcNumber          String   @unique /// Registre de commerce
+  taxId             String   @unique /// NIF
+  address           String
+  wilaya            String
+  catalogVisibility Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user             User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  catalog          WholesalerCatalog[]
+  wholesalerOrders WholesalerOrder[]
+
+  @@map("wholesalers")
+}
+
+// ============================================================
+// RÉFÉRENTIEL MÉDICAMENTS
+// ============================================================
+
+/// Référentiel national des médicaments — importé depuis CSV officiel MSPRH
+model Medicine {
+  id                     String   @id @default(uuid())
+  codeCIP                String   @unique /// Identifiant officiel algérien (Code CIP)
+  name                   String   /// Nom commercial nettoyé (ex: "XENID")
+  dci                    String   /// Dénomination Commune Internationale (molécule)
+  dosage                 String?  /// Ex: "75MG/3ML"
+  form                   String?  /// Forme galénique (ex: "Solution injectable")
+  laboratory             String?  /// Laboratoire fabricant
+  category               String?  /// Classe thérapeutique (ex: "ANTI-INFLAMMATOIRES")
+  conditionnement        String?  /// Ex: "B/30", "FL/100ML"
+  paysOrigine            String?  /// Pays de fabrication
+  isPrescriptionRequired Boolean  @default(false)
+  isPrinceps             Boolean  @default(false) /// Médicament de référence (vs générique)
+  isPsychotropic         Boolean  @default(false) /// Psychotrope — tableau spécial
+  isFrigo                Boolean  @default(false) /// Conservation au réfrigérateur
+  isRemboursable         Boolean  @default(false) /// Remboursable sécurité sociale
+  tva                    Float?   /// TVA en décimal (ex: 0.09 pour 9%)
+  shp                    Float?   /// Prix de référence SHP (Algérie)
+  ppa                    Float?   /// Prix Public Algérie (PPA)
+  description            String?
+  remarque               String?
+  designation2           String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  stock             Stock[]
+  orderItems        OrderItem[]
+  wholesalerCatalog WholesalerCatalog[]
+  wholesalerItems   WholesalerOrderItem[]
+
+  @@index([name])
+  @@index([dci])
+  @@index([codeCIP])
+  @@index([category])
+  @@index([laboratory])
+  @@map("medicines")
+}
+
+// ============================================================
+// GESTION DE STOCK
+// ============================================================
+
+/// Inventaire par pharmacie — chaque ligne = un médicament + lot
+model Stock {
+  id              String    @id @default(uuid())
+  pharmacyId      String
+  medicineId      String
+  quantity        Int       @default(0)
+  purchasePrice   Decimal   @db.Decimal(10, 2)
+  sellingPrice    Decimal   @db.Decimal(10, 2)
+  expirationDate  DateTime
+  batchNumber     String?   /// Numéro de lot (traçabilité)
+  isVisible       Boolean   @default(true) /// Visible dans la recherche publique
+  isLowStock      Boolean   @default(false) /// Qty <= 10
+  isExpiringSoon  Boolean   @default(false) /// Expiration < 3 mois
+  deletedAt       DateTime? /// Soft delete
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  pharmacy   Pharmacy    @relation(fields: [pharmacyId], references: [id], onDelete: Restrict)
+  medicine   Medicine    @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  orderItems OrderItem[]
+
+  @@unique([pharmacyId, medicineId, batchNumber])
+  @@index([pharmacyId, medicineId])
+  @@map("stocks")
+}
+
+// ============================================================
+// COMMANDES PATIENTS (B2C)
+// ============================================================
+
+/// Commande patient → pharmacie — avec gestion ordonnance
+model Order {
+  id                       String      @id @default(uuid())
+  patientId                String
+  pharmacyId               String
+  status                   OrderStatus @default(PENDING)
+  totalAmount              Decimal     @db.Decimal(10, 2)
+  prescriptionImageUrl     String?     /// URL Cloudinary/S3
+  prescriptionValidatedAt  DateTime?
+  pharmacistNote           String?
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @updatedAt
+
+  patient       Patient              @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  pharmacy      Pharmacy             @relation(fields: [pharmacyId], references: [id], onDelete: Restrict)
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
+  chatMessages  ChatMessage[]
+
+  @@index([patientId])
+  @@index([pharmacyId])
+  @@map("orders")
+}
+
+/// Ligne de commande — médicament + quantité + prix unitaire
+model OrderItem {
+  id               String    @id @default(uuid())
+  orderId          String
+  stockId          String
+  medicineId       String
+  quantity         Int
+  unitPrice        Decimal   @db.Decimal(10, 2)
+  substitutionOfId String?   /// Si substitution, référence l'item original
+  createdAt        DateTime  @default(now())
+
+  order          Order      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  stock          Stock      @relation(fields: [stockId], references: [id], onDelete: Restrict)
+  medicine       Medicine   @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  substitutedBy  OrderItem? @relation("Substitution", fields: [substitutionOfId], references: [id])
+  substitutions  OrderItem[] @relation("Substitution")
+
+  @@map("order_items")
+}
+
+/// Traçabilité complète des changements de statut d'une commande
+model OrderStatusHistory {
+  id        String      @id @default(uuid())
+  orderId   String
+  status    OrderStatus
+  changedBy String
+  changedAt DateTime    @default(now())
+  note      String?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user  User  @relation(fields: [changedBy], references: [id], onDelete: Restrict)
+
+  @@index([orderId, status])
+  @@map("order_status_history")
+}
+
+// ============================================================
+// MESSAGERIE & COMMUNICATION
+// ============================================================
+
+/// Messagerie sécurisée dans le contexte d'une commande
+model ChatMessage {
+  id            String   @id @default(uuid())
+  orderId       String
+  senderId      String
+  content       String
+  attachmentUrl String?
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  sender User  @relation(fields: [senderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("chat_messages")
+}
+
+/// Notifications in-app et push — toutes les alertes utilisateur
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?            /// Données contextuelles (orderId, stockId, etc.)
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@map("notifications")
+}
+
+// ============================================================
+// TRAÇABILITÉ RÉGLEMENTAIRE
+// ============================================================
+
+/// Logs d'audit — obligatoire HIPAA/GDPR pour données de santé
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String
+  entityType String   /// Ex: "Stock", "Order", "Prescription"
+  entityId   String
+  action     String   /// Ex: "UPDATE_QUANTITY", "VALIDATE_PRESCRIPTION"
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("audit_logs")
+}
+
+// ============================================================
+// MODULE GROSSISTE (B2B)
+// ============================================================
+
+/// Catalogue d'un grossiste — prix et disponibilités pour les pharmacies
+model WholesalerCatalog {
+  id               String   @id @default(uuid())
+  wholesalerId     String
+  medicineId       String
+  unitPrice        Decimal  @db.Decimal(10, 2)
+  minOrderQuantity Int      @default(1)
+  isAvailable      Boolean  @default(true)
+  updatedAt        DateTime @updatedAt
+
+  wholesaler Wholesaler @relation(fields: [wholesalerId], references: [id], onDelete: Restrict)
+  medicine   Medicine   @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+
+  @@unique([wholesalerId, medicineId])
+  @@map("wholesaler_catalog")
+}
+
+/// Commande d'une pharmacie vers un grossiste
+model WholesalerOrder {
+  id           String               @id @default(uuid())
+  pharmacyId   String
+  wholesalerId String
+  status       WholesalerOrderStatus @default(DRAFT)
+  totalAmount  Decimal              @db.Decimal(10, 2) @default(0)
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  pharmacy   Pharmacy              @relation(fields: [pharmacyId], references: [id], onDelete: Restrict)
+  wholesaler Wholesaler            @relation(fields: [wholesalerId], references: [id], onDelete: Restrict)
+  items      WholesalerOrderItem[]
+
+  @@map("wholesaler_orders")
+}
+
+/// Lignes d'une commande grossiste
+model WholesalerOrderItem {
+  id               String  @id @default(uuid())
+  wholesalerOrderId String
+  medicineId       String
+  quantity         Int
+  unitPrice        Decimal @db.Decimal(10, 2)
+
+  wholesalerOrder WholesalerOrder @relation(fields: [wholesalerOrderId], references: [id], onDelete: Restrict)
+  medicine        Medicine        @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+
+  @@map("wholesaler_order_items")
+}
